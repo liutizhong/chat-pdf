@@ -84,6 +84,10 @@ class ChatResponse(BaseModel):
     answer: str
     sources: List[Dict[str, Any]]
 
+class ChatRequest(BaseModel):
+    document_id: str
+    query: str
+
 # Function to extract text from PDF
 def extract_text_from_pdf(pdf_path):
     text_by_page = []
@@ -103,6 +107,7 @@ async def vectorize_pdf(document_id, pdf_path, filename):
     
     # Store document info in Weaviate
     document_properties = {
+        "document_id":document_id,
         "filename": filename,
         "upload_date": datetime.now().isoformat(),
         "page_count": len(text_by_page)
@@ -110,10 +115,18 @@ async def vectorize_pdf(document_id, pdf_path, filename):
     print("==================")
     print(document_properties)
     collection = client.collections.get("Document")
-    collection.data.insert(
-        properties=document_properties,
-        uuid=document_id
-    )
+    data_row=[document_properties]
+    with collection.batch.dynamic() as batch:
+        for content in data_row:
+            batch.add_object(
+                    properties=content,
+                    uuid = document_id 
+                )
+    # collection.data.insert(
+    #     properties=document_properties,
+    #     uuid=document_id
+    # )
+
     PDFPage = client.collections.get("PDFPage")
     with PDFPage.batch.dynamic() as batch:
         for page_num, content in text_by_page:
@@ -206,7 +219,7 @@ async def get_documents():
     for item in reviews.iterator():
         # Add the UUID as the id field to match the model
         doc = item.properties
-        doc["id"] = item.uuid.hex  # Add the UUID as the id field
+        doc["id"] = doc['document_id']  # Add the UUID as the id field
         documents.append(doc)
     
     print("+++/api/documents+++")
@@ -223,36 +236,87 @@ async def get_document_pdf(document_id: str):
     
     return FileResponse(file_path, media_type="application/pdf")
 
+# @app.post("/api/chatold", response_model=ChatResponse)
+# async def chat2(document_id: str, query: str):
+#     reviews = client.collections.get("PDFPage")
+#     print("xxxxxxxxxxxxx")
+#     response = reviews.query.near_text(
+#             query=query,
+#             filters=Filter.by_property("document_id").equal(document_id),
+#             limit=5,
+#             return_metadata=MetadataQuery(score=True, explain_score=True),
+#         )
+#     context=[]
+#     context_texts = []
+#     sources = []
+#     if response and hasattr(response, "objects"):
+#             for o in response.objects:
+#                 page = o.properties
+#                 context_texts.append(f"Page {page['page_number']}: {page['content']}")
+#                 sources.append({
+#                     "page": page["page_number"],
+#                     "relevance": 0.8  # Placeholder for relevance score
+#                 })
+#                 # context.append(o.properties)
+#             answer = await generate_ollama_response(query, "\n\n".join(context_texts))
+#             return {
+#                     "answer": answer,
+#                     "sources": sources
+#                 }
+#     else:
+#         raise HTTPException(status_code=404, detail="No relevant content found")
+
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(document_id: str, query: str):
-    reviews = client.collections.get("PDFPage")
-    print("xxxxxxxxxxxxx")
-    response = reviews.query.near_text(
-            query=query,
-            filters=Filter.by_property("document_id").equal(document_id),
-            limit=5,
-            return_metadata=MetadataQuery(score=True, explain_score=True),
-        )
-    context=[]
-    context_texts = []
-    sources = []
-    if response and hasattr(response, "objects"):
-            for o in response.objects:
-                page = o.properties
-                context_texts.append(f"Page {page['page_number']}: {page['content']}")
-                sources.append({
-                    "page": page["page_number"],
-                    "relevance": 0.8  # Placeholder for relevance score
-                })
-                # context.append(o.properties)
-            answer = await generate_ollama_response(query, "\n\n".join(context_texts))
-            return {
-                    "answer": answer,
-                    "sources": sources
-                }
-    else:
-        raise HTTPException(status_code=404, detail="No relevant content found")
+async def chat(request: ChatRequest):
+    document_id = request.document_id
+    query = request.query
     
+    # try:
+    #     # Get the PDFPage collection
+    #     reviews = client.collections.get("PDFPage")
+        
+    #     # Query for relevant content using near_text
+    #     response = reviews.query.near_text(
+    #         query=query,
+    #         filters=Filter.by_property("document_id").equal(document_id),
+    #         limit=5,
+    #         return_metadata=MetadataQuery(score=True, explain_score=True),
+    #     )
+        
+    #     context_texts = []
+    #     sources = []
+        
+    #     # Check if we got results
+    #     if response and hasattr(response, "objects") and len(response.objects) > 0:
+    #         for o in response.objects:
+    #             page = o.properties
+    #             context_texts.append(f"Page {page['page_number']}: {page['content']}")
+    #             sources.append({
+    #                 "page": page["page_number"],
+    #                 "relevance": round(o.metadata.score, 2) if hasattr(o.metadata, "score") else 0.5
+    #             })
+            
+    #         # Generate answer from Ollama
+    #         answer = await generate_ollama_response(query, "\n\n".join(context_texts))
+            
+    #         return {
+    #             "answer": answer,
+    #             "sources": sources
+    #         }
+    #     else:
+    #         # No relevant content found but return a graceful message instead of 404
+    #         return {
+    #             "answer": "I couldn't find relevant information about that in this document. Could you rephrase your question?",
+    #             "sources": []
+    #         }
+    # except Exception as e:
+    #     print(f"Error in chat endpoint: {str(e)}")
+    #     raise HTTPException(status_code=500, detail=str(e))  
+    sources=[{"page":12,"relevance":0.8},{"page":8,"relevance":0.8},{"page":3,"relevance":0.8}]
+    return {
+                "answer": "10000",
+                "sources": sources
+            }
 
 if __name__ == "__main__":
     import uvicorn

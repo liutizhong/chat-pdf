@@ -52,15 +52,60 @@ const apiService = {
     },
 
     // Send a chat message and get response
+    // sendChatMessage: async (documentId, query) => {
+    //     try {
+    //         const response = await axios.post(`/api/chat`, {
+    //             document_id: documentId,
+    //             query: query
+    //         });
+    //         return response.data;
+    //     } catch (error) {
+    //         console.error('Error sending chat message:', error);
+    //         throw error;
+    //     }
+    // }
+
+    // sendChatMessage: async (documentId, query) => {
+    //     try {
+    //         const response = await axios.post(`/api/chat?document_id=${documentId}&query=${encodeURIComponent(query)}`);
+    //         return response.data;
+    //     } catch (error) {
+    //         console.error('Error sending chat message:', error);
+    //         throw error;
+    //     }
+    // }
+
+
+    // Send a chat message and get response
     sendChatMessage: async (documentId, query) => {
         try {
-            const response = await axios.post(`/api/chat`, {
-                document_id: documentId,
-                query: query
-            });
+            // Add timeout to prevent hanging requests
+            const response = await axios.post(
+                `/api/chat`,
+                {
+                    document_id: documentId,
+                    query: query
+                },
+                {
+                    timeout: 30000, // 30 second timeout
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
             return response.data;
         } catch (error) {
             console.error('Error sending chat message:', error);
+            // Provide more specific error information
+            if (error.response) {
+                // The request was made and the server responded with a status code
+                // that falls out of the range of 2xx
+                console.error('Response data:', error.response.data);
+                console.error('Response status:', error.response.status);
+            } else if (error.request) {
+                // The request was made but no response was received
+                console.error('No response received:', error.request);
+            }
             throw error;
         }
     }

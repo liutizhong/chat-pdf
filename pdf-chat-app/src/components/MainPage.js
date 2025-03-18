@@ -9,7 +9,8 @@ import ChatMessage from './ChatMessage';
 // Set up the worker for react-pdf
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
 
-function MainPage({ documents }) {
+function MainPage({ documents: initialDocuments, setDocuments }) {
+    const [documents, setLocalDocuments] = useState(initialDocuments || []);
     const [selectedDocument, setSelectedDocument] = useState('');
     const [pdfUrl, setPdfUrl] = useState(null);
     const [numPages, setNumPages] = useState(null);
@@ -31,10 +32,15 @@ function MainPage({ documents }) {
         // Load documents if they weren't passed as props
         if (!documents || documents.length === 0) {
             apiService.getDocuments()
-                .then(data => documents(data))
+                .then(data => {
+                    setLocalDocuments(data);
+                    if (setDocuments) {
+                        setDocuments(data);
+                    }
+                })
                 .catch(error => console.error('Error fetching documents:', error));
         }
-    }, [documents]);
+    }, [setDocuments]);
 
     const handleDocumentChange = (event) => {
         const docId = event.target.value;
@@ -72,6 +78,36 @@ function MainPage({ documents }) {
         }
     };
 
+    // const sendMessage = async () => {
+    //     if (!input.trim() || !selectedDocument) return;
+
+    //     const userMessage = { text: input, sender: 'user' };
+    //     setMessages(prevMessages => [...prevMessages, userMessage]);
+    //     setInput('');
+    //     setLoading(true);
+
+    //     try {
+    //         const response = await apiService.sendChatMessage(selectedDocument, input);
+
+    //         const botMessage = {
+    //             text: response.answer,
+    //             sender: 'bot',
+    //             sources: response.sources || []
+    //         };
+
+    //         setMessages(prevMessages => [...prevMessages, botMessage]);
+    //     } catch (error) {
+    //         console.error('Error sending message:', error);
+    //         const errorMessage = {
+    //             text: 'Sorry, I encountered an error processing your request.',
+    //             sender: 'bot'
+    //         };
+    //         setMessages(prevMessages => [...prevMessages, errorMessage]);
+    //     } finally {
+    //         setLoading(false);
+    //     }
+    // };
+
     const sendMessage = async () => {
         if (!input.trim() || !selectedDocument) return;
 
@@ -81,19 +117,24 @@ function MainPage({ documents }) {
         setLoading(true);
 
         try {
+            // Call the API service with proper error handling
             const response = await apiService.sendChatMessage(selectedDocument, input);
 
-            const botMessage = {
-                text: response.answer,
-                sender: 'bot',
-                sources: response.sources || []
-            };
-
-            setMessages(prevMessages => [...prevMessages, botMessage]);
+            // Check if we have a valid response
+            if (response && response.answer) {
+                const botMessage = {
+                    text: response.answer,
+                    sender: 'bot',
+                    sources: response.sources || []
+                };
+                setMessages(prevMessages => [...prevMessages, botMessage]);
+            } else {
+                throw new Error('Invalid response from server');
+            }
         } catch (error) {
             console.error('Error sending message:', error);
             const errorMessage = {
-                text: 'Sorry, I encountered an error processing your request.',
+                text: 'Sorry, I encountered an error processing your request. Please try again later.',
                 sender: 'bot'
             };
             setMessages(prevMessages => [...prevMessages, errorMessage]);
@@ -143,8 +184,51 @@ function MainPage({ documents }) {
                             </Select>
                         </FormControl>
                     </div>
-
                     {pdfUrl && (
+                        <div className="pdf-viewer" ref={pdfRef}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', marginBottom: '10px' }}>
+                                <Button
+                                    disabled={currentPage <= 1}
+                                    onClick={() => handlePageChange(currentPage - 1)}
+                                >
+                                    Previous
+                                </Button>
+                                <Typography>
+                                    Page {currentPage} of {numPages || '?'}
+                                </Typography>
+                                <Button
+                                    disabled={currentPage >= numPages}
+                                    onClick={() => handlePageChange(currentPage + 1)}
+                                >
+                                    Next
+                                </Button>
+                            </div>
+
+                            <Document
+                                file={pdfUrl}
+                                onLoadSuccess={onDocumentLoadSuccess}
+                                loading={<CircularProgress />}
+                                error={<Typography color="error">Error loading PDF!</Typography>}
+                                options={{
+                                    cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
+                                    cMapPacked: true,
+                                    standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts`
+                                }}
+                            >
+                                {numPages && (
+                                    <Page
+                                        key={`page_${currentPage}`}
+                                        pageNumber={currentPage}
+                                        renderTextLayer={false}
+                                        renderAnnotationLayer={false}
+                                        scale={1.2}
+                                        loading={<CircularProgress size={20} />}
+                                    />
+                                )}
+                            </Document>
+                        </div>
+                    )}
+                    {/* {pdfUrl && (
                         <div className="pdf-viewer" ref={pdfRef}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', marginBottom: '10px' }}>
                                 <Button
@@ -177,7 +261,8 @@ function MainPage({ documents }) {
                                 />
                             </Document>
                         </div>
-                    )}
+                    )} */}
+
                 </div>
 
                 <div className="chat-container">
@@ -202,9 +287,9 @@ function MainPage({ documents }) {
                             type="text"
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
-                            onKeyPress={handleKeyPress}
+                            // onKeyPress={handleKeyPress}
                             placeholder="Ask a question about the PDF..."
-                            disabled={!selectedDocument || loading}
+                            //disabled={!selectedDocument || loading}
                             style={{
                                 flex: 1,
                                 padding: '10px',
