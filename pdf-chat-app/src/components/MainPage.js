@@ -3,12 +3,14 @@ import { Link } from 'react-router-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { 
     FormControl, InputLabel, Select, MenuItem, Button, AppBar, 
-    Toolbar, Typography, IconButton, CircularProgress, Paper, Box 
+    Toolbar, Typography, IconButton, CircularProgress, Paper, Box,
+    Drawer
 } from '@mui/material';
-import { CloudUpload, Send } from '@mui/icons-material';
+import { CloudUpload, Send, Menu as MenuIcon } from '@mui/icons-material';
 import apiService from '../services/apiService';
 import ChatMessage from './ChatMessage';
 import SourceHighlight from './SourceHighlight';
+import Sidebar from './Sidebar';
 
 // Set up the worker for react-pdf
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
@@ -16,6 +18,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/$
 function MainPage({ documents: initialDocuments, setDocuments }) {
     const [documents, setLocalDocuments] = useState(initialDocuments || []);
     const [selectedDocument, setSelectedDocument] = useState('');
+    const [mobileOpen, setMobileOpen] = useState(false);
     const [pdfUrl, setPdfUrl] = useState(null);
     const [numPages, setNumPages] = useState(null);
     const [currentPage, setCurrentPage] = useState(1);
@@ -47,8 +50,7 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
         }
     }, [setDocuments]);
 
-    const handleDocumentChange = (event) => {
-        const docId = event.target.value;
+    const handleDocumentChange = (docId) => {
         setSelectedDocument(docId);
 
         if (docId) {
@@ -287,10 +289,23 @@ const jumpToPage = (pageNumber, sourceText = null) => {
         }
     };
 
+    const handleDrawerToggle = () => {
+        setMobileOpen(!mobileOpen);
+    };
+
     return (
         <div className="App">
             <AppBar position="static">
                 <Toolbar>
+                    <IconButton
+                        color="inherit"
+                        aria-label="open drawer"
+                        edge="start"
+                        onClick={handleDrawerToggle}
+                        sx={{ mr: 2, display: { sm: 'none' } }}
+                    >
+                        <MenuIcon />
+                    </IconButton>
                     <Typography variant="h6" style={{ flexGrow: 1 }}>
                         PDF Chat Assistant
                     </Typography>
@@ -301,26 +316,38 @@ const jumpToPage = (pageNumber, sourceText = null) => {
             </AppBar>
 
             <div className="main-container" style={{ display: 'flex', height: 'calc(100vh - 64px)' }}>
+                {/* Sidebar for mobile */}
+                <Drawer
+                    variant="temporary"
+                    open={mobileOpen}
+                    onClose={handleDrawerToggle}
+                    ModalProps={{
+                        keepMounted: true, // Better open performance on mobile
+                    }}
+                    sx={{
+                        display: { xs: 'block', sm: 'none' },
+                        '& .MuiDrawer-paper': { boxSizing: 'border-box', width: 240 },
+                    }}
+                >
+                    <Sidebar 
+                        documents={documents} 
+                        selectedDocument={selectedDocument} 
+                        onDocumentSelect={handleDocumentChange} 
+                    />
+                </Drawer>
+                
+                {/* Sidebar for desktop */}
+                <Box
+                    component="nav"
+                    sx={{ width: { sm: 240 }, flexShrink: { sm: 0 }, display: { xs: 'none', sm: 'block' } }}
+                >
+                    <Sidebar 
+                        documents={documents} 
+                        selectedDocument={selectedDocument} 
+                        onDocumentSelect={handleDocumentChange} 
+                    />
+                </Box>
                 <div className="pdf-container" style={{ flex: 1, overflow: 'auto', padding: '20px', position: 'relative' }}>
-                    <div className="document-selector" style={{ marginBottom: '20px' }}>
-                        <FormControl fullWidth>
-                            <InputLabel>Select Document</InputLabel>
-                            <Select
-                                value={selectedDocument}
-                                onChange={handleDocumentChange}
-                                label="Select Document"
-                            >
-                                <MenuItem value="">
-                                    <em>None</em>
-                                </MenuItem>
-                                {documents.map((doc) => (
-                                    <MenuItem key={doc.id} value={doc.id}>
-                                        {doc.filename}
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
-                    </div>
                     {pdfUrl && (
                         <Paper elevation={2} className="pdf-viewer" ref={pdfRef} style={{ padding: '15px' }}>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%', mb: 2 }}>
