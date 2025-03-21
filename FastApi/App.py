@@ -38,8 +38,8 @@ from datetime import datetime
 
 
 # Initialize Weaviate client and sentence transformer model
-weaviate_client = weaviate.connect_to_local(host=host,auth_credentials=Auth.api_key(API_KEY))
-collection = weaviate_client.collections.get("PDF_Collection")
+# weaviate_client = weaviate.connect_to_local(host=host,auth_credentials=Auth.api_key(API_KEY))
+# collection = weaviate_client.collections.get("PDF_Collection")
 
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
@@ -61,7 +61,8 @@ app.add_middleware(
 # Configuration
 UPLOAD_DIR = "uploads"
 WEAVIATE_URL = "http://localhost:8080"  # Change to your Weaviate instance URL
-OLLAMA_URL = "http://localhost:11434/api/generate"  # Ollama API endpoint
+OLLAMA_URL = "http://127.0.0.1:11434/api/generate"  # Ollama API endpoint
+OLLAMA_MODEL = "llama3.1:8b"
 
 # Create upload directory if it doesn't exist
 Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -149,7 +150,7 @@ async def vectorize_pdf(document_id, pdf_path, filename):
     return len(text_by_page)
 
 # Function to generate response from Ollama
-async def generate_ollama_response(prompt, context_texts):
+def generate_ollama_response(prompt, context_texts):
     # Prepare prompt with context
     full_prompt = f"""
     You are a helpful AI assistant that answers questions about PDF documents.
@@ -164,21 +165,38 @@ async def generate_ollama_response(prompt, context_texts):
     """
     
     # Call Ollama API
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            OLLAMA_URL,
+    response = requests.post(
+            f"{OLLAMA_URL}",
             json={
-                "model": "llama3.1",
+                "model": OLLAMA_MODEL,
                 "prompt": full_prompt,
                 "stream": False
-            }
+            },
+            timeout=60
         )
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail="Error generating response from LLM")
         
-        if response.status_code != 200:
-            raise HTTPException(status_code=500, detail="Error generating response from LLM")
-        
-        result = response.json()
-        return result["response"]
+    result = response.json()
+    return result["response"]
+
+
+    # async with httpx.AsyncClient() as client:  # async
+    #         response = await client.post(  #await
+    #             OLLAMA_URL,
+    #             json={
+    #                 "model": OLLAMA_MODEL,
+    #                 "prompt": full_prompt,
+    #                 "stream": False
+    #             }
+    #         )
+            
+    #         if response.status_code != 200:
+    #             raise HTTPException(status_code=500, detail="Error generating response from LLM")
+            
+    #         result = response.json()
+    #         return result["response"]
 
 # API endpoints
 @app.post("/api/upload", response_model=DocumentInfo)
@@ -237,87 +255,137 @@ async def get_document_pdf(document_id: str):
     return FileResponse(file_path, media_type="application/pdf")
 
 # @app.post("/api/chatold", response_model=ChatResponse)
-# async def chat2(document_id: str, query: str):
-#     reviews = client.collections.get("PDFPage")
-#     print("xxxxxxxxxxxxx")
-#     response = reviews.query.near_text(
-#             query=query,
-#             filters=Filter.by_property("document_id").equal(document_id),
-#             limit=5,
-#             return_metadata=MetadataQuery(score=True, explain_score=True),
-#         )
-#     context=[]
-#     context_texts = []
-#     sources = []
-#     if response and hasattr(response, "objects"):
-#             for o in response.objects:
-#                 page = o.properties
-#                 context_texts.append(f"Page {page['page_number']}: {page['content']}")
-#                 sources.append({
-#                     "page": page["page_number"],
-#                     "relevance": 0.8  # Placeholder for relevance score
-#                 })
-#                 # context.append(o.properties)
-#             answer = await generate_ollama_response(query, "\n\n".join(context_texts))
-#             return {
-#                     "answer": answer,
-#                     "sources": sources
-#                 }
-#     else:
-#         raise HTTPException(status_code=404, detail="No relevant content found")
+def chat2(document_id: str, query: str):
+    # document_id = request.document_id
+    # query = request.query
+    
+    try:
+        # Get the PDFPage collection
+        reviews = client.collections.get("PDFPage")
+        
+        # Query for relevant content using near_text
+        response = reviews.query.near_text(
+            query=query,
+            filters=Filter.by_property("document_id").equal(document_id),
+            limit=5,
+            return_metadata=MetadataQuery(score=True, explain_score=True),
+        )
+        
+        context_texts = []
+        sources = []
+        
+        # Check if we got results
+        if response and hasattr(response, "objects") and len(response.objects) > 0:
+            for o in response.objects:
+                page = o.properties
+                context_texts.append(f"Page {page['page_number']}: {page['content']}")
+                sources.append({
+                    "page": page["page_number"],
+                    "relevance": round(o.metadata.score, 2) if hasattr(o.metadata, "score") else 0.5
+                })
+            
+            # Generate answer from Ollama
+            answer = generate_ollama_response(query, "\n\n".join(context_texts))
+            print(answer)
+
+            client.close()
+            
+            return {
+                "answer": answer,
+                "sources": sources
+            }
+        else:
+            client.close()
+            # No relevant content found but return a graceful message instead of 404
+            return {
+                "answer": "I couldn't find relevant information about that in this document. Could you rephrase your question?",
+                "sources": []
+            }
+    except Exception as e:
+        print(f"Error in chat endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))  
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     document_id = request.document_id
     query = request.query
     
-    # try:
-    #     # Get the PDFPage collection
-    #     reviews = client.collections.get("PDFPage")
+    try:
+        # Get the PDFPage collection
+        reviews = client.collections.get("PDFPage")
         
-    #     # Query for relevant content using near_text
-    #     response = reviews.query.near_text(
-    #         query=query,
-    #         filters=Filter.by_property("document_id").equal(document_id),
-    #         limit=5,
-    #         return_metadata=MetadataQuery(score=True, explain_score=True),
-    #     )
+        # 1. Set a timeout for the Weaviate query
+        response = await asyncio.wait_for(
+            asyncio.create_task(
+                reviews.query.near_text(
+                    query=query,
+                    filters=Filter.by_property("document_id").equal(document_id),
+                    limit=3,  # Reduced from 5 to 3 for faster response
+                    return_metadata=MetadataQuery(score=True),  # Removed explain_score for faster response
+                )
+            ),
+            timeout=10.0  # 10 second timeout
+        )
         
-    #     context_texts = []
-    #     sources = []
+        context_texts = []
+        sources = []
         
-    #     # Check if we got results
-    #     if response and hasattr(response, "objects") and len(response.objects) > 0:
-    #         for o in response.objects:
-    #             page = o.properties
-    #             context_texts.append(f"Page {page['page_number']}: {page['content']}")
-    #             sources.append({
-    #                 "page": page["page_number"],
-    #                 "relevance": round(o.metadata.score, 2) if hasattr(o.metadata, "score") else 0.5
-    #             })
+        # Check if we got results
+        if response and hasattr(response, "objects") and len(response.objects) > 0:
+            for o in response.objects:
+                page = o.properties
+                # 2. Limit the context text length for faster processing
+                page_content = page['content']
+                if len(page_content) > 1000:  # Limit long page content
+                    page_content = page_content[:1000] + "..."
+                    
+                context_texts.append(f"Page {page['page_number']}: {page_content}")
+                sources.append({
+                    "page": page["page_number"],
+                    "relevance": round(o.metadata.score, 2) if hasattr(o.metadata, "score") else 0.5
+                })
             
-    #         # Generate answer from Ollama
-    #         answer = await generate_ollama_response(query, "\n\n".join(context_texts))
+            # 3. Set a timeout for the Ollama response generation
+            try:
+                answer = await asyncio.wait_for(
+                    generate_ollama_response(query, "\n\n".join(context_texts)),
+                    timeout=15.0  # 15 second timeout
+                )
+            except asyncio.TimeoutError:
+                # If LLM generation times out, send back a fallback response with sources
+                return {
+                    "answer": "I found some relevant information but couldn't generate a complete response in time. Please check these sources or try a more specific question.",
+                    "sources": sources
+                }
             
-    #         return {
-    #             "answer": answer,
-    #             "sources": sources
-    #         }
-    #     else:
-    #         # No relevant content found but return a graceful message instead of 404
-    #         return {
-    #             "answer": "I couldn't find relevant information about that in this document. Could you rephrase your question?",
-    #             "sources": []
-    #         }
-    # except Exception as e:
-    #     print(f"Error in chat endpoint: {str(e)}")
-    #     raise HTTPException(status_code=500, detail=str(e))  
-    sources=[{"page":12,"relevance":0.8},{"page":8,"relevance":0.8},{"page":3,"relevance":0.8}]
-    return {
-                "answer": "10000",
+            return {
+                "answer": answer,
                 "sources": sources
             }
+        else:
+            # No relevant content found but return a graceful message
+            return {
+                "answer": "I couldn't find relevant information about that in this document. Could you rephrase your question?",
+                "sources": []
+            }
+    except asyncio.TimeoutError:
+        # If the vector search times out
+        return {
+            "answer": "I'm having trouble retrieving information from the document. Please try again with a simpler question.",
+            "sources": []
+        }
+    except Exception as e:
+        print(f"Error in chat endpoint: {str(e)}")
+        # Return a meaningful response instead of throwing an error
+        return {
+            "answer": "I encountered an issue processing your question. Please try again.",
+            "sources": []
+        }
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+    # document_id="7054b3cd-c2ee-40b9-8562-908874f05782"
+    # query="营业收入"
+    # result=chat2(document_id,query)
+    # print(result)

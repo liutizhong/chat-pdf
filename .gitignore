@@ -1,2 +1,2 @@
-./pdf-chat-app/node_modules/*
-./FastApi/uploads/*
+/fastapi/uploads/*
+/pdf-chat-app/node_modules

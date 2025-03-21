@@ -78,6 +78,7 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
         }
     };
 
+
     // const sendMessage = async () => {
     //     if (!input.trim() || !selectedDocument) return;
 
@@ -87,19 +88,24 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
     //     setLoading(true);
 
     //     try {
+    //         // Call the API service with proper error handling
     //         const response = await apiService.sendChatMessage(selectedDocument, input);
 
-    //         const botMessage = {
-    //             text: response.answer,
-    //             sender: 'bot',
-    //             sources: response.sources || []
-    //         };
-
-    //         setMessages(prevMessages => [...prevMessages, botMessage]);
+    //         // Check if we have a valid response
+    //         if (response && response.answer) {
+    //             const botMessage = {
+    //                 text: response.answer,
+    //                 sender: 'bot',
+    //                 sources: response.sources || []
+    //             };
+    //             setMessages(prevMessages => [...prevMessages, botMessage]);
+    //         } else {
+    //             throw new Error('Invalid response from server');
+    //         }
     //     } catch (error) {
     //         console.error('Error sending message:', error);
     //         const errorMessage = {
-    //             text: 'Sorry, I encountered an error processing your request.',
+    //             text: 'Sorry, I encountered an error processing your request. Please try again later.',
     //             sender: 'bot'
     //         };
     //         setMessages(prevMessages => [...prevMessages, errorMessage]);
@@ -116,33 +122,67 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
         setInput('');
         setLoading(true);
 
+        // First, show a "processing" message that can be updated
+        const processingMessageId = Date.now();
+        const processingMessage = {
+            id: processingMessageId,
+            text: 'Processing your question...',
+            sender: 'bot',
+            isProcessing: true
+        };
+
+        setMessages(prevMessages => [...prevMessages, processingMessage]);
+
         try {
             // Call the API service with proper error handling
             const response = await apiService.sendChatMessage(selectedDocument, input);
 
             // Check if we have a valid response
             if (response && response.answer) {
+                // Replace the processing message with the actual response
                 const botMessage = {
+                    id: processingMessageId,
                     text: response.answer,
                     sender: 'bot',
                     sources: response.sources || []
                 };
-                setMessages(prevMessages => [...prevMessages, botMessage]);
+
+                setMessages(prevMessages =>
+                    prevMessages.map(msg =>
+                        msg.id === processingMessageId ? botMessage : msg
+                    )
+                );
             } else {
                 throw new Error('Invalid response from server');
             }
         } catch (error) {
             console.error('Error sending message:', error);
+
+            // Customize error message based on error type
+            let errorText = 'Sorry, I encountered an error processing your request. Please try again later.';
+
+            if (error.customMessage) {
+                errorText = error.customMessage;
+            } else if (error.name === 'AbortError' || error.code === 'ECONNABORTED') {
+                errorText = 'Your question is taking longer than expected to process. Please try a simpler question or try again later.';
+            }
+
+            // Replace the processing message with the error message
             const errorMessage = {
-                text: 'Sorry, I encountered an error processing your request. Please try again later.',
+                id: processingMessageId,
+                text: errorText,
                 sender: 'bot'
             };
-            setMessages(prevMessages => [...prevMessages, errorMessage]);
+
+            setMessages(prevMessages =>
+                prevMessages.map(msg =>
+                    msg.id === processingMessageId ? errorMessage : msg
+                )
+            );
         } finally {
             setLoading(false);
         }
     };
-
     const handleKeyPress = (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
