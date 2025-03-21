@@ -1,10 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { FormControl, InputLabel, Select, MenuItem, Button, AppBar, Toolbar, Typography, IconButton, CircularProgress } from '@mui/material';
+import { 
+    FormControl, InputLabel, Select, MenuItem, Button, AppBar, 
+    Toolbar, Typography, IconButton, CircularProgress, Paper, Box 
+} from '@mui/material';
 import { CloudUpload, Send } from '@mui/icons-material';
 import apiService from '../services/apiService';
 import ChatMessage from './ChatMessage';
+import SourceHighlight from './SourceHighlight';
 
 // Set up the worker for react-pdf
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
@@ -18,6 +22,7 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
+    const [selectedSource, setSelectedSource] = useState(null);
     const messagesEndRef = useRef(null);
     const pdfRef = useRef(null);
 
@@ -55,6 +60,7 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
             // Reset chat messages when changing document
             setMessages([]);
             setCurrentPage(1);
+            setSelectedSource(null);
         } else {
             setPdfUrl(null);
         }
@@ -67,52 +73,129 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
     const handlePageChange = (pageNumber) => {
         if (pageNumber >= 1 && pageNumber <= numPages) {
             setCurrentPage(pageNumber);
+            // Clear any selected source when manually changing pages
+            setSelectedSource(null);
         }
     };
 
-    const jumpToPage = (pageNumber) => {
-        setCurrentPage(pageNumber);
-        // Scroll the PDF viewer to the top of the new page
-        if (pdfRef.current) {
-            pdfRef.current.scrollIntoView({ behavior: 'smooth' });
-        }
-    };
-
-
-    // const sendMessage = async () => {
-    //     if (!input.trim() || !selectedDocument) return;
-
-    //     const userMessage = { text: input, sender: 'user' };
-    //     setMessages(prevMessages => [...prevMessages, userMessage]);
-    //     setInput('');
-    //     setLoading(true);
-
-    //     try {
-    //         // Call the API service with proper error handling
-    //         const response = await apiService.sendChatMessage(selectedDocument, input);
-
-    //         // Check if we have a valid response
-    //         if (response && response.answer) {
-    //             const botMessage = {
-    //                 text: response.answer,
-    //                 sender: 'bot',
-    //                 sources: response.sources || []
-    //             };
-    //             setMessages(prevMessages => [...prevMessages, botMessage]);
-    //         } else {
-    //             throw new Error('Invalid response from server');
+    // const jumpToPage = (pageNumber, sourceText = null) => {
+    //     // Make sure page number is valid
+    //     if (pageNumber < 1 || pageNumber > numPages) {
+    //         console.warn(`Invalid page number: ${pageNumber}`);
+    //         return;
+    //     }
+        
+    //     // Set the current page
+    //     setCurrentPage(pageNumber);
+        
+    //     // Add a visual indication that we're jumping to this page
+    //     if (pdfRef.current) {
+    //         // First scroll to make the PDF viewer visible
+    //         pdfRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            
+    //         // Add a temporary highlight effect to the page container
+    //         const pageContainer = pdfRef.current.querySelector('.react-pdf__Page');
+    //         if (pageContainer) {
+    //             pageContainer.style.boxShadow = '0 0 15px rgba(25, 118, 210, 0.8)';
+    //             pageContainer.style.transition = 'box-shadow 0.5s ease-in-out';
+                
+    //             // Remove the highlight after a short delay
+    //             setTimeout(() => {
+    //                 pageContainer.style.boxShadow = 'none';
+    //             }, 2000);
     //         }
-    //     } catch (error) {
-    //         console.error('Error sending message:', error);
-    //         const errorMessage = {
-    //             text: 'Sorry, I encountered an error processing your request. Please try again later.',
-    //             sender: 'bot'
-    //         };
-    //         setMessages(prevMessages => [...prevMessages, errorMessage]);
-    //     } finally {
-    //         setLoading(false);
+    //     }
+        
+    //     // If we have specific text to highlight, display the source highlight component
+    //     if (sourceText) {
+    //         setSelectedSource({
+    //             page: pageNumber,
+    //             text: sourceText
+    //         });
     //     }
     // };
+
+    // const handleSourceClick = (source) => {
+    //     // If source is just a page number
+    //     if (typeof source === 'number') {
+    //         jumpToPage(source);
+    //         return;
+    //     }
+
+    //     // If source is an object with page and text
+    //     if (source.page) {
+    //         jumpToPage(source.page, source.text);
+    //         // Set the selected source for highlighting
+    //         setSelectedSource(source);
+    //     }
+    // };
+
+// Update the jumpToPage function to properly handle the selected source
+const jumpToPage = (pageNumber, sourceText = null) => {
+    // Make sure page number is valid
+    if (pageNumber < 1 || pageNumber > numPages) {
+        console.warn(`Invalid page number: ${pageNumber}`);
+        return;
+    }
+    
+    // Set the current page
+    setCurrentPage(pageNumber);
+    
+    // Add a visual indication that we're jumping to this page
+    if (pdfRef.current) {
+        // First scroll to make the PDF viewer visible
+        pdfRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        
+        // Add a temporary highlight effect to the page container
+        const pageContainer = pdfRef.current.querySelector('.react-pdf__Page');
+        if (pageContainer) {
+            pageContainer.style.boxShadow = '0 0 15px rgba(25, 118, 210, 0.8)';
+            pageContainer.style.transition = 'box-shadow 0.5s ease-in-out';
+            
+            // Remove the highlight after a short delay
+            setTimeout(() => {
+                pageContainer.style.boxShadow = 'none';
+            }, 2000);
+        }
+    }
+    
+    // If we have specific text to highlight, display the source highlight component
+    if (sourceText) {
+        // Clear any existing source first to ensure the component re-renders
+        setSelectedSource(null);
+        
+        // Use setTimeout to ensure the state updates in the correct order
+        setTimeout(() => {
+            setSelectedSource({
+                page: pageNumber,
+                text: sourceText
+            });
+        }, 0);
+    }
+};
+    const handleSourceClick = (source) => {
+        // Clear any previously selected source first
+        setSelectedSource(null);
+        
+        // If source is just a page number
+        if (typeof source === 'number') {
+            jumpToPage(source);
+            return;
+        }
+    
+        // If source is an object with page and text
+        if (source && source.page) {
+            // Use setTimeout to ensure state update happens after the previous setSelectedSource(null)
+            setTimeout(() => {
+                jumpToPage(source.page, source.text);
+                // Set the selected source for highlighting
+                setSelectedSource({
+                    page: source.page,
+                    text: source.text || ''
+                });
+            }, 0);
+        }
+    };
 
     const sendMessage = async () => {
         if (!input.trim() || !selectedDocument) return;
@@ -121,6 +204,7 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
         setMessages(prevMessages => [...prevMessages, userMessage]);
         setInput('');
         setLoading(true);
+        setSelectedSource(null); // Clear any selected source
 
         // First, show a "processing" message that can be updated
         const processingMessageId = Date.now();
@@ -139,12 +223,19 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
 
             // Check if we have a valid response
             if (response && response.answer) {
+                // Format sources to include page numbers and source text if available
+                const formattedSources = response.sources && response.sources.map(source => ({
+                    page: source.page || source.page_number,
+                    text: source.text || source.content || '',
+                    metadata: source.metadata || {}
+                }));
+
                 // Replace the processing message with the actual response
                 const botMessage = {
                     id: processingMessageId,
                     text: response.answer,
                     sender: 'bot',
-                    sources: response.sources || []
+                    sources: formattedSources || []
                 };
 
                 setMessages(prevMessages =>
@@ -152,6 +243,11 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
                         msg.id === processingMessageId ? botMessage : msg
                     )
                 );
+
+                // If we have sources with page numbers, automatically jump to the first source
+                if (formattedSources && formattedSources.length > 0 && formattedSources[0].page) {
+                    jumpToPage(formattedSources[0].page, formattedSources[0].text);
+                }
             } else {
                 throw new Error('Invalid response from server');
             }
@@ -183,6 +279,7 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
             setLoading(false);
         }
     };
+
     const handleKeyPress = (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -203,9 +300,9 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
                 </Toolbar>
             </AppBar>
 
-            <div className="main-container">
-                <div className="pdf-container">
-                    <div className="document-selector">
+            <div className="main-container" style={{ display: 'flex', height: 'calc(100vh - 64px)' }}>
+                <div className="pdf-container" style={{ flex: 1, overflow: 'auto', padding: '20px', position: 'relative' }}>
+                    <div className="document-selector" style={{ marginBottom: '20px' }}>
                         <FormControl fullWidth>
                             <InputLabel>Select Document</InputLabel>
                             <Select
@@ -225,24 +322,26 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
                         </FormControl>
                     </div>
                     {pdfUrl && (
-                        <div className="pdf-viewer" ref={pdfRef}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', marginBottom: '10px' }}>
+                        <Paper elevation={2} className="pdf-viewer" ref={pdfRef} style={{ padding: '15px' }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%', mb: 2 }}>
                                 <Button
+                                    variant="outlined"
                                     disabled={currentPage <= 1}
                                     onClick={() => handlePageChange(currentPage - 1)}
                                 >
                                     Previous
                                 </Button>
-                                <Typography>
+                                <Typography variant="subtitle1">
                                     Page {currentPage} of {numPages || '?'}
                                 </Typography>
                                 <Button
+                                    variant="outlined"
                                     disabled={currentPage >= numPages}
                                     onClick={() => handlePageChange(currentPage + 1)}
                                 >
                                     Next
                                 </Button>
-                            </div>
+                            </Box>
 
                             <Document
                                 file={pdfUrl}
@@ -266,52 +365,38 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
                                     />
                                 )}
                             </Document>
-                        </div>
+                        </Paper>
                     )}
-                    {/* {pdfUrl && (
-                        <div className="pdf-viewer" ref={pdfRef}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', marginBottom: '10px' }}>
-                                <Button
-                                    disabled={currentPage <= 1}
-                                    onClick={() => handlePageChange(currentPage - 1)}
-                                >
-                                    Previous
-                                </Button>
-                                <Typography>
-                                    Page {currentPage} of {numPages}
-                                </Typography>
-                                <Button
-                                    disabled={currentPage >= numPages}
-                                    onClick={() => handlePageChange(currentPage + 1)}
-                                >
-                                    Next
-                                </Button>
-                            </div>
-
-                            <Document
-                                file={pdfUrl}
-                                onLoadSuccess={onDocumentLoadSuccess}
-                                options={{ workerSrc: `/pdf.worker.min.js` }}
-                            >
-                                <Page
-                                    pageNumber={currentPage}
-                                    renderTextLayer={true}
-                                    renderAnnotationLayer={true}
-                                    scale={1.2}
-                                />
-                            </Document>
-                        </div>
-                    )} */}
-
+                    
+                    {/* Source Highlight Pop-up */}
+                    {selectedSource && (
+                        <SourceHighlight 
+                            source={selectedSource}
+                            onClose={() => setSelectedSource(null)}
+                            onNavigate={jumpToPage}
+                        />
+                    )}
                 </div>
 
-                <div className="chat-container">
-                    <div className="chat-messages">
+                <div className="chat-container" style={{ 
+                    width: '40%', 
+                    minWidth: '300px', 
+                    borderLeft: '1px solid #e0e0e0',
+                    display: 'flex',
+                    flexDirection: 'column'
+                }}>
+                    <div className="chat-messages" style={{ 
+                        flex: 1, 
+                        overflowY: 'auto', 
+                        padding: '10px',
+                        display: 'flex',
+                        flexDirection: 'column'
+                    }}>
                         {messages.map((message, index) => (
                             <ChatMessage
                                 key={index}
                                 message={message}
-                                onSourceClick={jumpToPage}
+                                onSourceClick={handleSourceClick}
                             />
                         ))}
                         {loading && (
@@ -322,14 +407,18 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
                         <div ref={messagesEndRef} />
                     </div>
 
-                    <div className="chat-input">
+                    <Paper elevation={2} className="chat-input" style={{ 
+                        padding: '10px', 
+                        display: 'flex', 
+                        borderTop: '1px solid #e0e0e0'
+                    }}>
                         <input
                             type="text"
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
-                            // onKeyPress={handleKeyPress}
+                            onKeyPress={handleKeyPress}
                             placeholder="Ask a question about the PDF..."
-                            //disabled={!selectedDocument || loading}
+                            disabled={!selectedDocument || loading}
                             style={{
                                 flex: 1,
                                 padding: '10px',
@@ -346,7 +435,7 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
                         >
                             Send
                         </Button>
-                    </div>
+                    </Paper>
                 </div>
             </div>
         </div>

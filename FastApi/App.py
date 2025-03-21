@@ -306,6 +306,61 @@ def chat2(document_id: str, query: str):
         raise HTTPException(status_code=500, detail=str(e))  
 
 @app.post("/api/chat", response_model=ChatResponse)
+async def chat1(request: ChatRequest):
+    document_id = request.document_id
+    query = request.query
+    print(f"query={query}")
+    
+    try:
+        # Get the PDFPage collection
+        reviews = client.collections.get("PDFPage")
+        
+        # Query for relevant content using near_text
+        response = reviews.query.near_text(
+            query=query,
+            filters=Filter.by_property("document_id").equal(document_id),
+            limit=5,
+            return_metadata=MetadataQuery(score=True, explain_score=True),
+        )
+        
+        context_texts = []
+        sources = []
+        
+        # Check if we got results
+        if response and hasattr(response, "objects") and len(response.objects) > 0:
+            for o in response.objects:
+                page = o.properties
+                context_texts.append(f"Page {page['page_number']}: {page['content']}")
+                sources.append({
+                    "page": page["page_number"],
+                    "relevance": round(o.metadata.score, 2) if hasattr(o.metadata, "score") else 0.5,
+                    "text": page['content']
+                })
+            
+            # Generate answer from Ollama
+            answer = generate_ollama_response(query, "\n\n".join(context_texts))
+            
+            return {
+                "answer": answer,
+                "sources": sources
+            }
+        else:
+            # No relevant content found but return a graceful message instead of 404
+            return {
+                "answer": "I couldn't find relevant information about that in this document. Could you rephrase your question?",
+                "sources": []
+            }
+    except Exception as e:
+        print(f"Error in chat endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))  
+    # sources=[{"page":12,"relevance":0.8},{"page":8,"relevance":0.8},{"page":3,"relevance":0.8}]
+    # return {
+    #             "answer": "10000",
+    #             "sources": sources
+    #         }
+
+
+@app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     document_id = request.document_id
     query = request.query
