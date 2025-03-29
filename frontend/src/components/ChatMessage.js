@@ -1,5 +1,5 @@
 import React from 'react';
-import { Typography, Chip, CircularProgress, Paper, Box, Tooltip } from '@mui/material';
+import { Typography, Chip, CircularProgress, Paper, Box } from '@mui/material';
 import { Book, LocationOn } from '@mui/icons-material';
 
 function ChatMessage({ message, onSourceClick }) {
@@ -43,12 +43,8 @@ function ChatMessage({ message, onSourceClick }) {
                         Sources:
                     </Typography>
                     {message.sources.map((source, idx) => (
-                        <Tooltip 
-                            key={idx} 
-                            title={source.text ? `"${source.text}"` : `Navigate to page ${source.page}`} 
-                            arrow
-                        >
                             <Chip
+                                key={idx}
                                 icon={source.text ? <Book fontSize="small" /> : <LocationOn fontSize="small" />}
                                 label={`Page ${source.page}`}
                                 onClick={() => onSourceClick(source.page)}
@@ -57,7 +53,6 @@ function ChatMessage({ message, onSourceClick }) {
                                 variant="outlined"
                                 sx={{ m: '2px', cursor: 'pointer' }}
                             />
-                        </Tooltip>
                     ))}
                 </Box>
             )}

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
     List,
@@ -9,25 +9,35 @@ import {
     Typography,
     Box,
     Paper,
-    Button
+    Button,
+    IconButton,
+    Drawer,
+    Collapse
 } from '@mui/material';
-import { Description, CloudUpload, Home } from '@mui/icons-material';
+import { Description, CloudUpload, Home, ChevronLeft, ChevronRight } from '@mui/icons-material';
 
-function Sidebar({ documents, selectedDocument, onDocumentSelect }) {
+function Sidebar({ documents, selectedDocument, onDocumentSelect, collapsed, onToggleCollapse }) {
     return (
         <Paper 
             elevation={0} 
             sx={{ 
                 height: '100%',
-                borderRight: '1px solid #e0e0e0',
+                
                 display: 'flex',
-                flexDirection: 'column'
+                flexDirection: 'column',
+                width: collapsed ? '64px' : '240px',
+                transition: 'width 0.3s ease'
             }}
         >
-            <Box sx={{ p: 2, borderBottom: '1px solid #e0e0e0' }}>
-                <Typography variant="h6" component="div">
-                    文档列表
-                </Typography>
+            <Box sx={{ p: 2, borderBottom: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                {!collapsed && (
+                    <Typography variant="h6" component="div">
+                        文档列表
+                    </Typography>
+                )}
+                <IconButton onClick={onToggleCollapse}>
+                    {collapsed ? <ChevronRight /> : <ChevronLeft />}
+                </IconButton>
             </Box>
             
             <List sx={{ flexGrow: 1, overflow: 'auto' }}>
@@ -74,8 +84,13 @@ function Sidebar({ documents, selectedDocument, onDocumentSelect }) {
                     variant="contained"
                     startIcon={<CloudUpload />}
                     fullWidth
+                    sx={{
+                        minWidth: collapsed ? 'auto' : undefined,
+                        px: collapsed ? 1 : undefined,
+                        justifyContent: collapsed ? 'center' : undefined
+                    }}
                 >
-                    上传PDF
+                    {!collapsed && '上传PDF'}
                 </Button>
                 <Button
                     component={Link}
@@ -83,9 +98,14 @@ function Sidebar({ documents, selectedDocument, onDocumentSelect }) {
                     variant="outlined"
                     startIcon={<Home />}
                     fullWidth
-                    sx={{ mt: 1 }}
+                    sx={{
+                        mt: 1,
+                        minWidth: collapsed ? 'auto' : undefined,
+                        px: collapsed ? 1 : undefined,
+                        justifyContent: collapsed ? 'center' : undefined
+                    }}
                 >
-                    返回首页
+                    {!collapsed && '返回首页'}
                 </Button>
             </Box>
         </Paper>

@@ -97,6 +97,28 @@ const initializeWithRetry = (attempt = 0) => {
         });
 };
 
+// Track worker initialization status
+let workerInitialized = false;
+let workerInitializationPromise = null;
+
+// Ensure worker is initialized before any PDF operations
+const ensureWorkerInitialized = async () => {
+  if (workerInitialized) return true;
+  
+  if (!workerInitializationPromise) {
+    workerInitializationPromise = initializeWithRetry();
+  }
+  
+  try {
+    await workerInitializationPromise;
+    workerInitialized = true;
+    return true;
+  } catch (error) {
+    console.error('Failed to initialize PDF.js worker:', error);
+    throw error;
+  }
+};
+
 initializeWithRetry();
 
 // Pre-load the worker script once when component is mounted
@@ -132,6 +154,7 @@ const preloadPdfWorker = () => {
 };
 
 function MainPage({ documents: initialDocuments, setDocuments }) {
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
     const [documents, setLocalDocuments] = useState(initialDocuments || []);
     const [selectedDocument, setSelectedDocument] = useState('');
     const [mobileOpen, setMobileOpen] = useState(false);
@@ -140,6 +163,7 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
     const [currentPage, setCurrentPage] = useState(1);
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
+    const inputRef = useRef(null);
     const [loading, setLoading] = useState(false);
     const [selectedSource, setSelectedSource] = useState(null);
     const [outline, setOutline] = useState(null);
@@ -149,11 +173,31 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
     const [pdfKey, setPdfKey] = useState(1); // Used to force remount of PDF component
     const messagesEndRef = useRef(null);
     const pdfRef = useRef(null);
+    const pdfInstanceRef = useRef(null); // Reference to PDF instance
     const workerScriptRef = useRef(null);
     const loadingAttemptRef = useRef(0); // Track loading attempts to prevent race conditions
     
     // 使用useMemo缓存PDF选项以避免不必要的重新渲染
-    const pdfOptions = useMemo(() => ({
+    // 主容器样式
+const containerStyle = {
+    display: 'flex',
+    flexDirection: 'row',
+    height: '100vh',
+    width: '100%',
+    overflow: 'hidden'
+};
+
+// PDF预览区域样式
+const pdfViewerStyle = {
+    flex: 1,
+    transition: 'all 0.3s ease',
+    height: '100%',
+    overflow: 'auto',
+    display: 'flex',
+    width: `calc(100% - ${sidebarCollapsed ? '64px' : '240px'})`
+};
+
+const pdfOptions = useMemo(() => ({
         cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
         cMapPacked: true,
         standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`,
@@ -172,7 +216,8 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
         canvasMaxAreaInBytes: 8192 * 8192, // Increase memory limit
         useWorkerFetch: true, // Use worker for fetching where possible
         pageViewMode: 'single', // Simpler page mode to reduce worker load
-        disableTelemetry: true // Disable any telemetry to reduce worker activity
+        disableTelemetry: true, // Disable any telemetry to reduce worker activity
+        scale: 1.0 // Set default scale to fit container
     }), []);
 
     useEffect(() => {
@@ -196,62 +241,99 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
         }
     }, [setDocuments]);
 
-    // Add a timeout effect for PDF loading
+    // Enhanced PDF loading with progressive loading and better error handling
     useEffect(() => {
         if (pdfUrl && !pdfError) {
-            console.log('Validating PDF URL:', pdfUrl);
+            console.log('Loading PDF:', pdfUrl);
             
-            // Validate the PDF before displaying it
-            const validatePdf = async () => {
+            let loadingTask;
+            let timeoutId;
+            let validationTimeoutId;
+            let isMounted = true;
+            
+            const loadPdf = async () => {
                 try {
                     // Only validate if it's a blob URL (which we control)
                     if (pdfUrl.startsWith('blob:')) {
-                        // Test load the PDF first to validate it
-                        const loadingTask = pdfjs.getDocument({
+                        // Progressive loading with multiple attempts
+                        loadingTask = pdfjs.getDocument({
                             url: pdfUrl,
-                            disableAutoFetch: true,
-                            disableStream: false
+                            disableAutoFetch: false,
+                            disableStream: false,
+                            maxImageSize: -1, // No limit on image size
+                            disableRange: false // Enable range requests
                         });
                         
-                        // Add a timeout to prevent hanging
-                        const timeoutPromise = new Promise((_, reject) => {
-                            setTimeout(() => reject(new Error('PDF validation timeout')), 10000);
-                        });
+                        // Initial validation timeout (shorter)
+                        validationTimeoutId = setTimeout(() => {
+                            if (isMounted) {
+                                console.log('Initial PDF validation timeout');
+                                setPdfError('PDF is loading... Please wait');
+                            }
+                        }, 5000);
                         
-                        // Race between loading and timeout
-                        const doc = await Promise.race([loadingTask.promise, timeoutPromise]);
+                        // Main loading timeout (longer)
+                        timeoutId = setTimeout(() => {
+                            if (isMounted) {
+                                console.log('PDF loading timeout reached');
+                                setPdfError('PDF loading is taking longer than expected. The document may be large.');
+                                loadingAttemptRef.current++;
+                            }
+                        }, 45000); // 45 second timeout
                         
-                        // Clean up
-                        doc.destroy();
-                        console.log('PDF validated successfully');
+                        const doc = await loadingTask.promise;
+                        
+                        if (isMounted) {
+                            clearTimeout(validationTimeoutId);
+                            clearTimeout(timeoutId);
+                            
+                            // Quick check of first page to validate document
+                            const page = await doc.getPage(1);
+                            await page.getTextContent();
+                            page.cleanup();
+                            
+                            doc.destroy();
+                            console.log('PDF loaded successfully');
+                            setPdfError(null);
+                        }
                     }
                 } catch (error) {
-                    console.error('PDF validation failed:', error);
-                    
-                    // Force remount and retry if validation fails
-                    setPdfError('PDF validation failed. Retrying...');
-                    setPdfKey(prevKey => prevKey + 1);
-                    
-                    setTimeout(() => {
-                        setPdfError(null);
-                        handleDocumentChange(selectedDocument);
-                    }, 1000);
+                    if (isMounted) {
+                        console.error('PDF loading error:', error);
+                        
+                        // Different error messages based on error type
+                        let errorMsg = 'Error loading PDF';
+                        if (error.name === 'PasswordException') {
+                            errorMsg = 'PDF requires a password';
+                        } else if (error.name === 'InvalidPDFException') {
+                            errorMsg = 'Invalid PDF file';
+                        } else if (error.message.includes('timeout')) {
+                            errorMsg = 'PDF loading timeout. Try again or check your connection.';
+                        }
+                        
+                        setPdfError(errorMsg);
+                        setPdfKey(prevKey => prevKey + 1);
+                        
+                        // Auto-retry after delay
+                        setTimeout(() => {
+                            if (isMounted) {
+                                setPdfError(null);
+                                handleDocumentChange(selectedDocument);
+                            }
+                        }, 2000);
+                    }
                 }
             };
             
-            validatePdf();
-            
-            // Set a timeout to catch hanging PDF loads
-            const timeoutId = setTimeout(() => {
-                console.log('PDF loading timeout reached');
-                setPdfError('PDF loading timeout. The document may be too large or the connection is slow.');
-                
-                // Increment loading attempt to prevent race conditions
-                loadingAttemptRef.current++;
-            }, 30000); // 30 second timeout
+            loadPdf();
             
             return () => {
+                isMounted = false;
                 clearTimeout(timeoutId);
+                clearTimeout(validationTimeoutId);
+                if (loadingTask) {
+                    loadingTask.destroy();
+                }
             };
         }
     }, [pdfUrl, pdfError, selectedDocument]);
@@ -401,9 +483,17 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
         }
     }, [pdfUrl, workerLoaded]);
 
+    const [heartbeatInterval, setHeartbeatInterval] = useState(null);
+
     const handleDocumentChange = (docId) => {
         setSelectedDocument(docId);
         setPdfError(null); // Reset any error state
+
+        // Clear previous heartbeat interval
+        if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+            setHeartbeatInterval(null);
+        }
 
         if (docId) {
             // Add loading indicator
@@ -423,6 +513,26 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
                 .then(url => {
                     if (url) {
                         setPdfUrl(url);
+                        
+                        // Setup heartbeat check for PDF
+                        const interval = setInterval(() => {
+                            if (pdfInstanceRef.current) {
+                                pdfInstanceRef.current.getMetadata().catch(err => {
+                                    console.warn('PDF heartbeat check failed:', err);
+                                    setPdfError('PDF连接异常，正在尝试恢复...');
+                                    handleDocumentChange(docId); // Re-fetch PDF
+                                });
+                            }
+                        }, 30000); // Check every 30 seconds
+                        
+                        setHeartbeatInterval(interval);
+                        
+                        // Cleanup interval on unmount
+                        return () => {
+                            if (interval) {
+                                clearInterval(interval);
+                            }
+                        };
                     }
                 })
                 .catch(error => {
@@ -432,6 +542,11 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
         } else {
             setPdfUrl(null);
         }
+    };
+    
+    // Separate message input handler that doesn't trigger PDF operations
+    const handleInputChange = (e) => {
+        setInput(e.target.value);
     };
 
     const onDocumentLoadSuccess = (pdf) => {
@@ -457,6 +572,9 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
         }
         
         setPdfError(null); // Reset error state on successful load
+        
+        // Store PDF instance reference
+        pdfInstanceRef.current = pdf;
         
         // Save a reference to check if worker disconnects
         try {
@@ -572,7 +690,6 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
         setMessages(prevMessages => [...prevMessages, userMessage]);
         setInput('');
         setLoading(true);
-        setSelectedSource(null); // Clear any selected source
 
         // First, show a "processing" message that can be updated
         const processingMessageId = Date.now();
@@ -612,10 +729,7 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
                     )
                 );
 
-                // 注释掉自动跳转到PDF页面的逻辑
-                // if (formattedSources && formattedSources.length > 0 && formattedSources[0].page) {
-                //     jumpToPage(formattedSources[0].page, formattedSources[0].text);
-                // }
+
             } else {
                 throw new Error('Invalid response from server');
             }
@@ -772,7 +886,9 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
                     <Sidebar 
                         documents={documents} 
                         selectedDocument={selectedDocument} 
-                        onDocumentSelect={handleDocumentChange} 
+                        onDocumentSelect={handleDocumentChange}
+                        collapsed={sidebarCollapsed}
+                        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
                     />
                 </Drawer>
                 
@@ -784,10 +900,17 @@ function MainPage({ documents: initialDocuments, setDocuments }) {
                     <Sidebar 
                         documents={documents} 
                         selectedDocument={selectedDocument} 
-                        onDocumentSelect={handleDocumentChange} 
+                        onDocumentSelect={handleDocumentChange}
+                        collapsed={sidebarCollapsed}
+                        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
                     />
                 </Box>
-                <div className="pdf-container" style={{ flex: 1, overflow: 'auto', padding: '20px', position: 'relative' }}>
+                <div className="pdf-container" style={{ 
+                    ...pdfViewerStyle, 
+                    position: 'relative',
+                    transition: 'all 0.3s ease', // 添加平滑过渡效果
+                    paddingLeft: '0' // 确保没有额外的内边距
+                }}>
                     {pdfUrl && (
                         <Paper elevation={2} className="pdf-viewer" ref={pdfRef} style={{ padding: '15px' }}>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%', mb: 2 }}>
