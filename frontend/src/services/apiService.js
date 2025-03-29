@@ -15,13 +15,51 @@ const apiService = {
     },
 
     // Get a specific document's PDF
-    getDocumentPdf: async (documentId) => {
+    getDocumentPdf: async (documentId, signal) => {
         try {
+            // Directly request blob data to avoid multiple transformations
             const response = await axios.get(`/api/documents/${documentId}/pdf`, {
-                responseType: 'blob'
+                responseType: 'blob',
+                signal: signal, // Pass the abort signal to axios
+                // Add headers to prevent caching issues
+                headers: {
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache'
+                }
             });
-            return URL.createObjectURL(response.data);
+            
+            // Create a reliable blob URL
+            try {
+                // Verify we received the correct content type to avoid issues
+                const contentType = response.headers['content-type'];
+                if (!contentType || !contentType.includes('pdf')) {
+                    console.warn('Response may not be a PDF', contentType);
+                }
+                
+                // Create our own copy of the blob to ensure it's clean
+                const cleanBlob = new Blob([response.data], { type: 'application/pdf' });
+                const blobUrl = URL.createObjectURL(cleanBlob);
+                console.log('Created blob URL with size:', cleanBlob.size, 'bytes');
+                
+                // Make sure blob is valid before returning
+                if (cleanBlob.size === 0) {
+                    throw new Error('Received empty PDF data');
+                }
+                
+                return blobUrl;
+            } catch (blobError) {
+                console.error('Error creating blob URL:', blobError);
+                throw new Error('Failed to process PDF data: ' + blobError.message);
+            }
         } catch (error) {
+            // Check if this was an abort error and pass it through
+            if (axios.isCancel(error) || error.name === 'AbortError') {
+                console.log('PDF request was cancelled:', error.message);
+                const abortError = new Error('Request aborted');
+                abortError.name = 'AbortError';
+                throw abortError;
+            }
+            
             console.error('Error fetching PDF:', error);
             throw error;
         }

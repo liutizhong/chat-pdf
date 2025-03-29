@@ -69,7 +69,73 @@ Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
 
 # Connect to Weaviate
 client = weaviate.connect_to_local(host=host,auth_credentials=Auth.api_key(API_KEY))
-collection = client.collections.get("PDF_Collection")
+
+# Initialize schema if collections don't exist
+try:
+    # Check if Document collection exists
+    try:
+        document_collection = client.collections.get("Document")
+        print("Document collection already exists")
+    except Exception as e:
+        print(f"Creating Document collection: {e}")
+        # Create Document collection
+        document_collection = client.collections.create(
+            name="Document",
+            properties=[
+                {
+                    "name": "document_id",
+                    "data_type": ["text"],
+                },
+                {
+                    "name": "filename",
+                    "data_type": ["text"],
+                },
+                {
+                    "name": "upload_date",
+                    "data_type": ["text"],
+                },
+                {
+                    "name": "page_count",
+                    "data_type": ["int"],
+                }
+            ]
+        )
+    
+    # Check if PDFPage collection exists
+    try:
+        pdf_page_collection = client.collections.get("PDFPage")
+        print("PDFPage collection already exists")
+    except Exception as e:
+        print(f"Creating PDFPage collection: {e}")
+        # Create PDFPage collection with vectorization
+        pdf_page_collection = client.collections.create(
+            name="PDFPage",
+            vectorizer="text2vec-transformers",  # Use the text vectorizer
+            properties=[
+                {
+                    "name": "content",
+                    "data_type": ["text"],
+                    "vectorize_property_name": True,  # Vectorize this property
+                },
+                {
+                    "name": "page_number",
+                    "data_type": ["int"],
+                },
+                {
+                    "name": "document_id",
+                    "data_type": ["text"],
+                }
+            ]
+        )
+except Exception as e:
+    print(f"Error initializing schema: {e}")
+
+# For backward compatibility
+try:
+    collection = client.collections.get("PDF_Collection")
+except Exception:
+    # If it doesn't exist, create a placeholder or ignore
+    print("PDF_Collection not found, continuing without it")
 
 # Pydantic models
 class DocumentInfo(BaseModel):
@@ -78,76 +144,120 @@ class DocumentInfo(BaseModel):
     page_count: int
     upload_date: str
 
-class ChatMessage(BaseModel):
-    message: str
-
-class ChatResponse(BaseModel):
-    answer: str
-    sources: List[Dict[str, Any]]
-
 class ChatRequest(BaseModel):
     document_id: str
     query: str
 
+class Source(BaseModel):
+    page: int
+    relevance: float = 0.0
+    text: str = ""
+
+class ChatResponse(BaseModel):
+    answer: str
+    sources: List[Source] = []
+
 # Function to extract text from PDF
 def extract_text_from_pdf(pdf_path):
-    text_by_page = []
-    with open(pdf_path, 'rb') as file:
-        pdf_reader = PyPDF2.PdfReader(file)
-        for page_num in range(len(pdf_reader.pages)):
-            page = pdf_reader.pages[page_num]
-            text = page.extract_text()
-            if text:
-                text_by_page.append((page_num + 1, text))
-    return text_by_page
+    try:
+        text_by_page = []
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            # Validate the PDF file
+            if len(pdf_reader.pages) == 0:
+                print(f"Warning: PDF has no pages: {pdf_path}")
+                return []
+                
+            for page_num in range(len(pdf_reader.pages)):
+                try:
+                    page = pdf_reader.pages[page_num]
+                    text = page.extract_text() or ""  # Use empty string if None
+                    if text.strip():  # Only add non-empty pages
+                        text_by_page.append((page_num + 1, text))
+                except Exception as e:
+                    print(f"Error extracting text from page {page_num}: {str(e)}")
+        
+        if not text_by_page:
+            print(f"Warning: Could not extract any text from PDF: {pdf_path}")
+        
+        return text_by_page
+    except Exception as e:
+        print(f"Error in extract_text_from_pdf: {str(e)}")
+        return []
 
 # Function to vectorize PDF and store in Weaviate
 async def vectorize_pdf(document_id, pdf_path, filename):
-    # Extract text from PDF
-    text_by_page = extract_text_from_pdf(pdf_path)
-    
-    # Store document info in Weaviate
-    document_properties = {
-        "document_id":document_id,
-        "filename": filename,
-        "upload_date": datetime.now().isoformat(),
-        "page_count": len(text_by_page)
-    }
-    print("==================")
-    print(document_properties)
-    collection = client.collections.get("Document")
-    data_row=[document_properties]
-    with collection.batch.dynamic() as batch:
-        for content in data_row:
-            batch.add_object(
-                    properties=content,
-                    uuid = document_id 
-                )
-    # collection.data.insert(
-    #     properties=document_properties,
-    #     uuid=document_id
-    # )
-
-    PDFPage = client.collections.get("PDFPage")
-    with PDFPage.batch.dynamic() as batch:
-        for page_num, content in text_by_page:
-            page_properties = {
-                    "content": content,
-                    "page_number": page_num,
-                    "document_id": document_id
-                }
-            page_id = generate_uuid5(f"{document_id}_{page_num}")
-            batch.add_object(
-                    properties=page_properties,
-                    uuid = page_id 
-                )
-
-    failed_objects = collection.batch.failed_objects
-    if failed_objects:
-        print(f"Number of failed imports: {len(failed_objects)}")
-        print(f"First failed object: {failed_objects[0]}")
-    
-    return len(text_by_page)
+    try:
+        print(f"Starting vectorization for document: {document_id}, file: {filename}")
+        
+        # Extract text from PDF
+        text_by_page = extract_text_from_pdf(pdf_path)
+        
+        if not text_by_page:
+            print(f"Warning: No text extracted from PDF {filename}")
+        
+        # Store document info in Weaviate
+        document_properties = {
+            "document_id": document_id,
+            "filename": filename,
+            "upload_date": datetime.now().isoformat(),
+            "page_count": len(text_by_page)
+        }
+        print(f"Document properties: {document_properties}")
+        
+        try:
+            collection = client.collections.get("Document")
+            
+            # Add document
+            data_row = [document_properties]
+            with collection.batch.dynamic() as batch:
+                for content in data_row:
+                    batch.add_object(
+                        properties=content,
+                        uuid=document_id 
+                    )
+                    
+            print(f"Added document {document_id} to Document collection")
+            
+            # Check for failed objects
+            if collection.batch.failed_objects:
+                print(f"Failed to import document {document_id}: {collection.batch.failed_objects}")
+        except Exception as e:
+            print(f"Error adding document to Weaviate: {str(e)}")
+            
+        # Add PDF pages if we have text
+        if text_by_page:
+            try:
+                PDFPage = client.collections.get("PDFPage")
+                
+                with PDFPage.batch.dynamic() as batch:
+                    for page_num, content in text_by_page:
+                        page_properties = {
+                            "content": content,
+                            "page_number": page_num,
+                            "document_id": document_id
+                        }
+                        page_id = generate_uuid5(f"{document_id}_{page_num}")
+                        batch.add_object(
+                            properties=page_properties,
+                            uuid=page_id 
+                        )
+                        
+                print(f"Added {len(text_by_page)} pages to PDFPage collection")
+                
+                # Check for failed objects
+                failed_objects = PDFPage.batch.failed_objects
+                if failed_objects:
+                    print(f"Number of failed page imports: {len(failed_objects)}")
+                    print(f"First failed object: {failed_objects[0]}")
+            except Exception as e:
+                print(f"Error adding PDF pages to Weaviate: {str(e)}")
+        
+        print(f"Completed vectorization for document: {document_id}")
+        return len(text_by_page)
+    except Exception as e:
+        print(f"Error in vectorize_pdf: {str(e)}")
+        return 0
 
 # Function to generate response from Ollama
 def generate_ollama_response(prompt, context_texts):
@@ -204,30 +314,53 @@ async def upload_pdf(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
 ):
-    print("+++===========")
-    if not file.filename.endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="File must be a PDF")
-    
-    # Generate a unique ID for the document
-    document_id = str(uuid.uuid4())
-    print(document_id)
-    # Save the uploaded file
-    file_path = os.path.join(UPLOAD_DIR, f"{document_id}.pdf")
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    
-    # Process the PDF in the background
-    background_tasks.add_task(vectorize_pdf, document_id, file_path, file.filename)
-    
-    return JSONResponse(
-        status_code=202,
-        content={
-            "id": document_id,
-            "filename": file.filename,
-            "page_count": 0,  # Will be updated after processing
-            "upload_date": datetime.now().isoformat()
-        }
-    )
+    try:
+        print("Starting PDF upload process")
+        
+        # Input validation
+        if not file or not file.filename:
+            raise HTTPException(status_code=400, detail="No file provided")
+            
+        if not file.filename.endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="File must be a PDF")
+        
+        # Generate a unique ID for the document
+        document_id = str(uuid.uuid4())
+        print(f"Generated document ID: {document_id}")
+        
+        # Ensure upload directory exists
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        
+        # Save the uploaded file
+        file_path = os.path.join(UPLOAD_DIR, f"{document_id}.pdf")
+        try:
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            print(f"File saved to {file_path}")
+        except Exception as e:
+            print(f"Error saving file: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error saving file: {str(e)}")
+        
+        # Process the PDF in the background
+        background_tasks.add_task(vectorize_pdf, document_id, file_path, file.filename)
+        print(f"Started background processing for document {document_id}")
+        
+        # Return immediate success response
+        return JSONResponse(
+            status_code=202,
+            content={
+                "id": document_id,
+                "filename": file.filename,
+                "page_count": 0,  # Will be updated after processing
+                "upload_date": datetime.now().isoformat()
+            }
+        )
+    except HTTPException as he:
+        # Re-raise HTTP exceptions
+        raise he
+    except Exception as e:
+        print(f"Unexpected error in upload_pdf: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 @app.get("/api/documents", response_model=List[DocumentInfo])
 async def get_documents():
