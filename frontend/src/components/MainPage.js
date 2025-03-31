@@ -190,11 +190,13 @@ const containerStyle = {
 // PDF预览区域样式
 const pdfViewerStyle = {
     flex: 1,
+    flexGrow: 1,
     transition: 'all 0.3s ease',
     height: '100%',
     overflow: 'auto',
     display: 'flex',
     width: `calc(100% - ${sidebarCollapsed ? '64px' : '240px'})`
+    // 移除固定宽度计算，使用flex属性自动填充可用空间
 };
 
 const pdfOptions = useMemo(() => ({
@@ -514,14 +516,39 @@ const pdfOptions = useMemo(() => ({
                     if (url) {
                         setPdfUrl(url);
                         
-                        // Setup heartbeat check for PDF
+                        // Setup heartbeat check for PDF with improved error handling
                         const interval = setInterval(() => {
-                            if (pdfInstanceRef.current) {
-                                pdfInstanceRef.current.getMetadata().catch(err => {
-                                    console.warn('PDF heartbeat check failed:', err);
+                            try {
+                                // First check if the PDF instance still exists and has valid transport
+                                if (pdfInstanceRef.current && 
+                                    pdfInstanceRef.current.transport && 
+                                    pdfInstanceRef.current.transport.messageHandler && 
+                                    pdfInstanceRef.current.transport.messageHandler.comObj &&
+                                    pdfInstanceRef.current.transport._worker &&
+                                    pdfInstanceRef.current.transport._worker.port) {
+                                    
+                                    // Use a safer method to check PDF health
+                                    pdfInstanceRef.current.getPageCount()
+                                        .then(() => {
+                                            // PDF is healthy, no action needed
+                                            console.log('PDF heartbeat check passed');
+                                        })
+                                        .catch(err => {
+                                            console.warn('PDF heartbeat check failed:', err);
+                                            setPdfError('PDF连接异常，正在尝试恢复...');
+                                            handleDocumentChange(docId); // Re-fetch PDF
+                                        });
+                                } else if (pdfInstanceRef.current) {
+                                    // PDF instance exists but transport is invalid
+                                    console.warn('PDF transport invalid, attempting recovery');
                                     setPdfError('PDF连接异常，正在尝试恢复...');
                                     handleDocumentChange(docId); // Re-fetch PDF
-                                });
+                                }
+                            } catch (err) {
+                                // Handle any unexpected errors in the heartbeat check itself
+                                console.error('Error in PDF heartbeat check:', err);
+                                setPdfError('PDF连接异常，正在尝试恢复...');
+                                handleDocumentChange(docId); // Re-fetch PDF
                             }
                         }, 30000); // Check every 30 seconds
                         
@@ -550,52 +577,71 @@ const pdfOptions = useMemo(() => ({
     };
 
     const onDocumentLoadSuccess = (pdf) => {
-        if (!pdf) {
-            console.error('PDF object is undefined or null');
-            setPdfError('无法加载PDF文档，请重试');
-            return;
-        }
-        
-        console.log('PDF loaded successfully:', pdf.numPages, 'pages');
-        
-        // 确保numPages是有效值
-        if (pdf.numPages && typeof pdf.numPages === 'number' && pdf.numPages > 0) {
-            setNumPages(pdf.numPages);
-            
-            // 重置页码到有效范围
-            if (currentPage > pdf.numPages) {
-                setCurrentPage(1);
-            }
-        } else {
-            console.warn('Invalid numPages:', pdf.numPages);
-            setNumPages(1); // 设置默认值
-        }
-        
-        setPdfError(null); // Reset error state on successful load
-        
-        // Store PDF instance reference
-        pdfInstanceRef.current = pdf;
-        
-        // Save a reference to check if worker disconnects
         try {
-            // 检查transport和messageHandler是否存在并正确初始化
-            if (pdf.transport) {
-                console.log('PDF transport verified');
+            if (!pdf) {
+                console.error('PDF object is undefined or null');
+                setPdfError('无法加载PDF文档，请重试');
+                return;
+            }
+            
+            console.log('PDF loaded successfully:', pdf.numPages, 'pages');
+            
+            // 确保numPages是有效值
+            if (pdf.numPages && typeof pdf.numPages === 'number' && pdf.numPages > 0) {
+                setNumPages(pdf.numPages);
                 
-                if (pdf.transport.messageHandler && pdf.transport.messageHandler.comObj) {
-                    console.log('PDF worker connection verified');
-                } else {
-                    console.warn('PDF worker message handler not properly established');
+                // 重置页码到有效范围
+                if (currentPage > pdf.numPages) {
+                    setCurrentPage(1);
                 }
             } else {
-                console.warn('PDF transport not properly established');
+                console.warn('Invalid numPages:', pdf.numPages);
+                setNumPages(1); // 设置默认值
             }
+            
+            setPdfError(null); // Reset error state on successful load
+            
+            // Verify PDF instance integrity before storing reference
+            let isValidPdf = true;
+            
+            // 检查transport和messageHandler是否存在并正确初始化
+            if (!pdf.transport) {
+                console.warn('PDF transport not established');
+                isValidPdf = false;
+            } else if (!pdf.transport.messageHandler || !pdf.transport.messageHandler.comObj) {
+                console.warn('PDF worker message handler not properly established');
+                isValidPdf = false;
+            } else {
+                console.log('PDF worker connection verified successfully');
+                
+                // Perform a quick test to verify the worker communication
+                pdf.getPageCount()
+                    .then(count => {
+                        console.log(`PDF worker communication verified: ${count} pages`);
+                    })
+                    .catch(err => {
+                        console.error('Error verifying worker communication:', err);
+                        isValidPdf = false;
+                        setPdfError('PDF加载异常，请重试');
+                    });
+            }
+            
+            if (isValidPdf) {
+                // Only store the PDF instance if it's valid
+                pdfInstanceRef.current = pdf;
+                console.log('PDF instance reference stored successfully');
+            } else {
+                console.warn('Not storing PDF instance reference due to validation failure');
+                pdfInstanceRef.current = null;
+            }
+            
+            // 不再需要提取目录
+            setOutline(null);
         } catch (err) {
-            console.error('Error checking worker connection:', err);
+            console.error('Unexpected error in onDocumentLoadSuccess:', err);
+            setPdfError('PDF加载过程中发生错误，请重试');
+            pdfInstanceRef.current = null;
         }
-        
-        // 不再需要提取目录
-        setOutline(null);
     };
 
     const handlePageChange = (pageNumber) => {

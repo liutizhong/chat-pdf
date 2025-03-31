@@ -14,7 +14,7 @@ import {
     Drawer,
     Collapse
 } from '@mui/material';
-import { Description, CloudUpload, Home, ChevronLeft, ChevronRight } from '@mui/icons-material';
+import { Description, CloudUpload, Home, ChevronLeft, ChevronRight, Search } from '@mui/icons-material';
 
 function Sidebar({ documents, selectedDocument, onDocumentSelect, collapsed, onToggleCollapse }) {
     return (
@@ -91,6 +91,22 @@ function Sidebar({ documents, selectedDocument, onDocumentSelect, collapsed, onT
                     }}
                 >
                     {!collapsed && '上传PDF'}
+                </Button>
+                <Button
+                    component={Link}
+                    to="/knowledge-search"
+                    variant="contained"
+                    color="secondary"
+                    startIcon={<Search />}
+                    fullWidth
+                    sx={{
+                        mt: 1,
+                        minWidth: collapsed ? 'auto' : undefined,
+                        px: collapsed ? 1 : undefined,
+                        justifyContent: collapsed ? 'center' : undefined
+                    }}
+                >
+                    {!collapsed && '知识检索'}
                 </Button>
                 <Button
                     component={Link}

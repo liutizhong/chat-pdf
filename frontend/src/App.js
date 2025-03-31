@@ -5,6 +5,8 @@ import CssBaseline from '@mui/material/CssBaseline';
 import './App.css';
 import MainPage from './components/MainPage';
 import UploadPage from './components/UploadPage';
+import KnowledgeSearchPage from './components/KnowledgeSearchPage';
+import SearchResultDetail from './components/SearchResultDetail';
 import apiService from './services/apiService';
 
 const theme = createTheme({
@@ -49,6 +51,8 @@ function App() {
                     <Routes>
                         <Route path="/" element={<MainPage documents={documents} />} />
                         <Route path="/upload" element={<UploadPage />} />
+                        <Route path="/knowledge-search" element={<KnowledgeSearchPage documents={documents} />} />
+                        <Route path="/search-result/:resultId" element={<SearchResultDetail documents={documents} />} />
                     </Routes>
                 </div>
             </Router>
